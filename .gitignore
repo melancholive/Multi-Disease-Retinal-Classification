@@ -212,5 +212,4 @@ __marimo__/
 *.ckpt
 *.safetensors
 uploads/
-models/
 checkpoints/

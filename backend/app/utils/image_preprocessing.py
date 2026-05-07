@@ -4,28 +4,28 @@ from PIL import Image
 from torchvision.transforms import v2
 
 
-def crop_black_borders(image):
-    # Convert PIL Image to NumPy array
+def crop_black_borders(image: Image.Image) -> Image.Image:
     img_np = np.array(image)
 
-    # Threshold for black pixels
-    # Pixels with R, G, B values all below this threshold will be considered black
-    BLACK_THRESHOLD = 10
+    if img_np.ndim == 2:
+        return image
 
-    non_black_pixels = np.any(img_np > BLACK_THRESHOLD, axis=2)
+    if img_np.shape[2] == 4:
+        img_np = img_np[:, :, :3]
 
-    # Find rows and columns that contain non-black pixels
+    black_threshold = 10
+    non_black_pixels = np.any(img_np > black_threshold, axis=2)
+
+    if not np.any(non_black_pixels):
+        return image
+
     rows = np.any(non_black_pixels, axis=1)
     cols = np.any(non_black_pixels, axis=0)
 
-    # Get the min/max indices for cropping
     rmin, rmax = np.where(rows)[0][[0, -1]]
     cmin, cmax = np.where(cols)[0][[0, -1]]
 
-    # Crop the NumPy array
     cropped_img_np = img_np[rmin : rmax + 1, cmin : cmax + 1]
-
-    # Convert back to PIL Image
     return Image.fromarray(cropped_img_np)
 
 
