@@ -4,3 +4,4 @@ tmp/
 .ruff_cache/
 .envrc
 checkpoints/
+.env
