@@ -46,3 +46,8 @@ next-env.d.ts
 
 # large model files
 models/*.pth
+
+shell.nix
+.envrc
+.direnv/
+default.nix

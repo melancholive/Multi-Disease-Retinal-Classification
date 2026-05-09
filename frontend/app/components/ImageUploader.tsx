@@ -1,20 +1,37 @@
 'use client';
 
 import { useState, useRef } from 'react';
+import AgentChat from './AgentChat';
 import styles from './ImageUploader.module.css';
 
 interface PredictionResult {
-  predictions: Record<string, number>;
+  top_k: Array<{
+    label: string;
+    probability: number;
+    index?: number;
+  }>;
+  fusion_weights?: number[];
+  explanations?: {
+    target_index: number | null;
+    target_label: string | null;
+    cams: {
+      resnet?: { overlay_png: string };
+      efficientnet?: { overlay_png: string };
+      shufflenet?: { overlay_png: string };
+    };
+  };
   error?: string;
   preprocessedImage?: string;
 }
 
 export default function ImageUploader() {
   const [image, setImage] = useState<string | null>(null);
+  const [imageFile, setImageFile] = useState<File | null>(null);
   const [fileName, setFileName] = useState<string>('');
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState<PredictionResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [agentChatKey, setAgentChatKey] = useState(crypto.randomUUID());
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const processFile = (file: File) => {
@@ -31,8 +48,10 @@ export default function ImageUploader() {
     }
 
     setFileName(file.name);
+    setImageFile(file);
     setError(null);
     setResults(null);
+    setAgentChatKey(crypto.randomUUID());
 
     const reader = new FileReader();
     reader.onload = (e) => {
@@ -66,7 +85,7 @@ export default function ImageUploader() {
   };
 
   const handleAnalyze = async () => {
-    if (!image) {
+    if (!image || !imageFile) {
       setError('Please select an image first');
       return;
     }
@@ -75,20 +94,23 @@ export default function ImageUploader() {
     setError(null);
 
     try {
+      const formData = new FormData();
+      formData.append('image', imageFile);
+      formData.append('top_k', '5');
+
       const response = await fetch('/api/predict', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ image }),
+        body: formData,
       });
 
       if (!response.ok) {
-        throw new Error('Failed to get predictions');
+        const text = await response.text().catch(() => '');
+        throw new Error(text || 'Failed to get predictions');
       }
 
       const data = await response.json();
       setResults(data);
+      setAgentChatKey(crypto.randomUUID());
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred');
       setResults(null);
@@ -99,9 +121,11 @@ export default function ImageUploader() {
 
   const handleReset = () => {
     setImage(null);
+    setImageFile(null);
     setFileName('');
     setResults(null);
     setError(null);
+    setAgentChatKey(crypto.randomUUID());
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
@@ -148,29 +172,54 @@ export default function ImageUploader() {
                     <div className={styles.imagDisplay}>
                       <div className={styles.transformedImageContainer}>
                         <p className={`${styles.transformedLabel} dark:${styles.transformedLabelDark}`}>
-                          Model Attention Heatmap
+                          Grad-CAM Explanations
                         </p>
-                        <div className={`${styles.heatmapPlaceholder} dark:${styles.heatmapPlaceholderDark}`}>
-                          <svg
-                            className={`${styles.heatmapIcon} dark:${styles.heatmapIconDark}`}
-                            fill="none"
-                            stroke="currentColor"
-                            viewBox="0 0 24 24"
-                          >
-                            <path
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              strokeWidth={1.5}
-                              d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"
-                            />
-                          </svg>
-                          <p className={`${styles.heatmapText} dark:${styles.heatmapTextDark}`}>
-                            Attention Heatmap
-                          </p>
-                          <p className={`${styles.heatmapSubtext} dark:${styles.heatmapSubtextDark}`}>
-                            Visual explanation of model predictions coming soon
-                          </p>
-                        </div>
+                        {results.explanations?.cams ? (
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '1rem' }}>
+                            <div>
+                              <p className={`${styles.heatmapText} dark:${styles.heatmapTextDark}`}>ResNet</p>
+                              {results.explanations.cams.resnet?.overlay_png ? (
+                                <img
+                                  src={results.explanations.cams.resnet.overlay_png}
+                                  alt="ResNet Grad-CAM"
+                                  style={{ width: '100%', height: 'auto', borderRadius: '0.5rem' }}
+                                />
+                              ) : (
+                                <p className={`${styles.heatmapSubtext} dark:${styles.heatmapSubtextDark}`}>No Grad-CAM returned</p>
+                              )}
+                            </div>
+                            <div>
+                              <p className={`${styles.heatmapText} dark:${styles.heatmapTextDark}`}>EfficientNet</p>
+                              {results.explanations.cams.efficientnet?.overlay_png ? (
+                                <img
+                                  src={results.explanations.cams.efficientnet.overlay_png}
+                                  alt="EfficientNet Grad-CAM"
+                                  style={{ width: '100%', height: 'auto', borderRadius: '0.5rem' }}
+                                />
+                              ) : (
+                                <p className={`${styles.heatmapSubtext} dark:${styles.heatmapSubtextDark}`}>No Grad-CAM returned</p>
+                              )}
+                            </div>
+                            <div>
+                              <p className={`${styles.heatmapText} dark:${styles.heatmapTextDark}`}>ShuffleNet</p>
+                              {results.explanations.cams.shufflenet?.overlay_png ? (
+                                <img
+                                  src={results.explanations.cams.shufflenet.overlay_png}
+                                  alt="ShuffleNet Grad-CAM"
+                                  style={{ width: '100%', height: 'auto', borderRadius: '0.5rem' }}
+                                />
+                              ) : (
+                                <p className={`${styles.heatmapSubtext} dark:${styles.heatmapSubtextDark}`}>No Grad-CAM returned</p>
+                              )}
+                            </div>
+                          </div>
+                        ) : (
+                          <div className={`${styles.heatmapPlaceholder} dark:${styles.heatmapPlaceholderDark}`}>
+                            <p className={`${styles.heatmapSubtext} dark:${styles.heatmapSubtextDark}`}>
+                              No Grad-CAM data returned
+                            </p>
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -264,26 +313,26 @@ export default function ImageUploader() {
                       Top Predictions
                     </h3>
                     <div className={styles.predictionsList}>
-                      {Object.entries(results.predictions).map(([disease, confidence], index) => (
-                        <div key={disease} className={styles.predictionItem}>
+                      {results.top_k.map((pred, index) => (
+                        <div key={`${pred.label}-${pred.index ?? index}`} className={styles.predictionItem}>
                           <div className={styles.predictionHeader}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', minWidth: 0 }}>
                               <span className={`${styles.predictionRank} dark:${styles.predictionRankDark}`}>
                                 {index + 1}
                               </span>
                               <span className={`${styles.predictionName} dark:${styles.predictionNameDark}`}>
-                                {disease}
+                                {pred.label}
                               </span>
                             </div>
                             <span className={`${styles.predictionConfidence} dark:${styles.predictionConfidenceDark}`}>
-                              {(confidence * 100).toFixed(0)}%
+                              {(pred.probability * 100).toFixed(0)}%
                             </span>
                           </div>
                           <div className={`${styles.progressBar} dark:${styles.progressBarDark}`}>
                             <div
                               className={styles.progressFill}
                               style={{
-                                width: `${Math.min(confidence * 100, 100)}%`,
+                                width: `${Math.min(pred.probability * 100, 100)}%`,
                                 backgroundColor:
                                   index === 0 ? 'rgb(34, 197, 94)' :
                                   index === 1 ? 'rgb(59, 130, 246)' :
@@ -299,22 +348,7 @@ export default function ImageUploader() {
                   </div>
                 )}
 
-                {/* Disease Summary */}
-                {results && (
-                  <div className={`${styles.diseaseSummaryCard} dark:${styles.diseaseSummaryCardDark}`}>
-                    <h3 className={`${styles.diseaseSummaryTitle} dark:${styles.diseaseSummaryTitleDark}`}>
-                      Disease Summary
-                    </h3>
-                    <p className={`${styles.diseaseSummarySubtitle} dark:${styles.diseaseSummarySubtitleDark}`}>
-                      Similarities & differences
-                    </p>
-                    <textarea
-                      readOnly
-                      placeholder="Disease summary will appear here..."
-                      className={`${styles.textarea} dark:${styles.textareaDark}`}
-                    />
-                  </div>
-                )}
+                <AgentChat key={agentChatKey} fileName={fileName} results={results} />
               </>
             )}
           </div>

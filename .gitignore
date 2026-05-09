@@ -3,6 +3,9 @@ __pycache__/
 *.py[codz]
 *$py.class
 
+# Bytecode
+**/*.pyc
+
 # C extensions
 *.so
 
@@ -205,3 +208,12 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# model stuff
+*.pth
+*.pt
+*.ckpt
+*.safetensors
+uploads/
+checkpoints/
+tmp/

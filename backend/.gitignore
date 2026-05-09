@@ -1,0 +1,7 @@
+shell.nix
+tmp/
+.direnv
+.ruff_cache/
+.envrc
+checkpoints/
+.env
