@@ -1,7 +1,10 @@
 import json
+import os
+from threading import Lock
 
 import numpy as np
 import torch
+import httpx
 from PIL import Image
 from transformers import pipeline
 
@@ -9,6 +12,38 @@ from app.utils.json_parsing import extract_json
 
 
 _MEDGEMMA_PIPE = None
+_MEDGEMMA_LOCK = Lock()
+
+
+def _get_remote_medgemma_url() -> str | None:
+    url = os.getenv("MEDGEMMA_API_URL")
+    return url.strip() if url else None
+
+
+def _get_remote_timeout() -> float:
+    return float(os.getenv("MEDGEMMA_API_TIMEOUT", "600"))
+
+
+def _get_medgemma_pipeline_kwargs() -> dict:
+    """Use explicit placement by default to avoid Accelerate meta tensors."""
+
+    device_map = os.getenv("MEDGEMMA_DEVICE_MAP")
+    if device_map:
+        return {
+            "torch_dtype": torch.bfloat16 if torch.cuda.is_available() else torch.float32,
+            "device_map": device_map,
+        }
+
+    if torch.cuda.is_available():
+        return {
+            "torch_dtype": torch.bfloat16,
+            "device": 0,
+        }
+
+    return {
+        "torch_dtype": torch.float32,
+        "device": -1,
+    }
 
 
 def get_medgemma_pipe():
@@ -19,106 +54,50 @@ def get_medgemma_pipe():
 
     global _MEDGEMMA_PIPE
     if _MEDGEMMA_PIPE is None:
-        _MEDGEMMA_PIPE = pipeline(
-            task="image-text-to-text",
-            model="google/medgemma-4b-it",
-            torch_dtype=torch.bfloat16,
-            device_map="auto",
-        )
+        with _MEDGEMMA_LOCK:
+            if _MEDGEMMA_PIPE is None:
+                _MEDGEMMA_PIPE = pipeline(
+                    task="image-text-to-text",
+                    model="google/medgemma-4b-it",
+                    **_get_medgemma_pipeline_kwargs(),
+                )
     return _MEDGEMMA_PIPE
 
 
-def call_medgemma_text(
-    medgemma_model,
-    prompt,
-    image=None,
-    max_new_tokens=1024,
-    do_sample=False,
-):
-    """
-    Call MedGemma with text-only or image+text input.
+def _extract_remote_text(data) -> str:
+    if isinstance(data, str):
+        return data
 
-    Parameters
-    ----------
-    medgemma_model : HuggingFace pipeline
-        image-text-to-text pipeline
+    if isinstance(data, dict):
+        for key in ("text", "answer", "generated_text", "response", "output"):
+            value = data.get(key)
+            if isinstance(value, str):
+                return value
 
-    prompt : str
-        Prompt text
+        return json.dumps(data)
 
-    image : optional
-        PIL image, numpy array, tensor, or image path
+    return str(data)
 
-    Returns
-    -------
-    str
-        Extracted text response from MedGemma
-    """
 
-    messages = [{"role": "user", "content": []}]
-
-    # optional image input
-    if image is not None:
-        if isinstance(image, str):
-            image = Image.open(image).convert("RGB")
-
-        elif isinstance(image, np.ndarray):
-            if image.max() <= 1.0:
-                image = (image * 255).astype(np.uint8)
-
-            image = Image.fromarray(image.astype(np.uint8))
-
-        elif isinstance(image, torch.Tensor):
-            img_array = image.detach().cpu().numpy()
-
-            if img_array.ndim == 3 and img_array.shape[0] in [1, 3]:
-                img_array = np.transpose(img_array, (1, 2, 0))
-
-            if img_array.max() <= 1.0:
-                img_array = (img_array * 255).astype(np.uint8)
-
-            image = Image.fromarray(img_array.astype(np.uint8))
-
-        messages[0]["content"].append({"type": "image", "image": image})
-
-    # add text prompt
-    messages[0]["content"].append({"type": "text", "text": prompt})
+def call_remote_medgemma(
+    api_url: str, prompt: str, max_new_tokens: int
+) -> str:
+    response = httpx.post(
+        api_url,
+        json={
+            "prompt": prompt,
+            "max_new_tokens": max_new_tokens,
+        },
+        timeout=_get_remote_timeout(),
+    )
+    response.raise_for_status()
 
     try:
-        output = medgemma_model(
-            text=messages,
-            max_new_tokens=max_new_tokens,
-            do_sample=do_sample,
-        )
+        data = response.json()
+    except ValueError:
+        data = response.text
 
-        # pipeline output handling
-        if isinstance(output, str):
-            return output
-
-        if isinstance(output, list) and len(output) > 0:
-            first = output[0]
-
-            # common HF pipeline structure
-            if isinstance(first, dict):
-                generated = first.get("generated_text") or first.get("text") or first
-
-                # conversational output
-                if isinstance(generated, list):
-                    last_message = generated[-1]
-
-                    if isinstance(last_message, dict):
-                        return last_message.get("content", str(last_message))
-
-                    return str(last_message)
-
-                return str(generated)
-
-            return str(first)
-
-        return str(output)
-
-    except Exception as e:
-        return json.dumps({"error": f"MedGemma inference failed: {str(e)}"})
+    return _extract_remote_text(data)
 
 
 def medgemma_model(prompt: str, max_new_tokens: int = 2048) -> str:
@@ -130,6 +109,16 @@ No code fences.
 
 {prompt}
 """
+
+    remote_url = _get_remote_medgemma_url()
+    if remote_url:
+        text = call_remote_medgemma(
+            api_url=remote_url,
+            prompt=strict_prompt,
+            max_new_tokens=max_new_tokens,
+        )
+        parsed = extract_json(text)
+        return json.dumps(parsed, indent=2)
 
     medgemma_pipe = get_medgemma_pipe()
     output = medgemma_pipe(

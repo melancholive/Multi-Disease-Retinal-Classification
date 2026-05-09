@@ -1,7 +1,8 @@
 import json
-from typing import Any
+from typing import Annotated, Any
 
 from langchain_core.tools import tool
+from langgraph.prebuilt import InjectedState
 from pydantic import BaseModel, Field
 
 from app.utils.json_parsing import safe_parse_json
@@ -38,16 +39,26 @@ Return this JSON schema:
 
 
 def create_disease_similarity_tool(medgemma_model):
-    @tool(
-        name_or_callable="disease_similarity_analysis",
-        args_schema=DiseaseSimilarityInput,
-    )
-    def disease_similarity_analysis(top_diseases: list[dict[str, Any]]) -> str:
+    @tool(name_or_callable="disease_similarity_analysis")
+    def disease_similarity_analysis(
+        top_diseases: Annotated[
+            list[dict[str, Any]] | None, InjectedState("top_diseases")
+        ],
+    ) -> str:
         """
         Use MedGemma to compare multiple candidate eye diseases.
         Explains similarities, shared mechanisms, co-occurrence, and likely diagnostic confusion.
         Does not diagnose.
         """
+
+        if not top_diseases:
+            return json.dumps(
+                {
+                    "tool_name": "disease_similarity_analysis",
+                    "error": "No candidate diseases were provided in agent state.",
+                },
+                indent=2,
+            )
 
         if len(top_diseases) < 2:
             return json.dumps(

@@ -1,7 +1,8 @@
 import json
-from typing import Any
+from typing import Annotated, Any
 
 from langchain_core.tools import tool
+from langgraph.prebuilt import InjectedState
 from pydantic import BaseModel, Field
 
 from app.utils.json_parsing import safe_parse_json
@@ -41,17 +42,25 @@ Return this JSON schema:
 
 
 def create_next_step_recommendation_tool(medgemma_model):
-    @tool(
-        name_or_callable="next_step_recommendation",
-        args_schema=NextStepRecommendationInput,
-    )
+    @tool(name_or_callable="next_step_recommendation")
     def next_step_recommendation(
-        top_diseases: list[dict[str, Any]],
+        top_diseases: Annotated[
+            list[dict[str, Any]] | None, InjectedState("top_diseases")
+        ],
     ) -> str:
         """
         Use MedGemma to recommend safe next steps after candidate eye diseases are identified.
         This tool does not diagnose, prescribe treatment, or recommend medication changes.
         """
+
+        if not top_diseases:
+            return json.dumps(
+                {
+                    "tool_name": "next_step_recommendation",
+                    "error": "No candidate diseases were provided in agent state.",
+                },
+                indent=2,
+            )
 
         prompt = build_next_step_prompt(
             top_diseases=top_diseases,

@@ -561,6 +561,35 @@
   gap: 0.875rem;
 }
 
+.agentChatBox {
+  min-height: 180px;
+  max-height: 420px;
+  overflow-y: auto;
+  padding: 0.875rem;
+  border: 1px solid #eef2f5;
+  border-radius: 10px;
+  background: #f8f9fb;
+}
+
+.agentChatBoxDark {
+  background: #0d1629;
+  border-color: #1f2d47;
+}
+
+.agentEmptyState {
+  min-height: 150px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #64748b;
+  font-size: 0.9rem;
+  text-align: center;
+}
+
+.agentEmptyStateDark {
+  color: #94a3b8;
+}
+
 .agentRow {
   display: flex;
   gap: 0.75rem;
@@ -624,6 +653,35 @@
   cursor: not-allowed;
 }
 
+.agentTranscript {
+  display: flex;
+  flex-direction: column;
+  gap: 0.875rem;
+}
+
+.agentExchange {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.agentQuestion {
+  align-self: flex-end;
+  max-width: min(92%, 46rem);
+  padding: 0.75rem 0.875rem;
+  border-radius: 10px;
+  background: #0f172a;
+  color: #ffffff;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.agentQuestionDark {
+  background: #2f5bff;
+  color: #ffffff;
+}
+
 .agentAnswer {
   padding: 0.875rem;
   border-radius: 10px;
@@ -639,6 +697,11 @@
   background: #0d1629;
   border-color: #1f2d47;
   color: #e6edf6;
+}
+
+.agentAnswerPending {
+  color: #64748b;
+  font-style: italic;
 }
 
 /* Heatmap Placeholder */

@@ -1,11 +1,12 @@
 import base64
 import json
 from io import BytesIO
-from typing import Any
+from typing import Annotated, Any
 
 import numpy as np
 import torch
 from langchain_core.tools import tool
+from langgraph.prebuilt import InjectedState
 from PIL import Image
 from pydantic import BaseModel, Field
 
@@ -40,6 +41,23 @@ class GradCamInterpretationInput(BaseModel):
     per_class_f1: list[float] | None = None
     class_names: list[str] | None = None
     top_disease_index: int | None = None
+
+
+def _get_top_disease(top_diseases: list[dict[str, Any]] | None) -> tuple[str | None, int | None]:
+    if not top_diseases:
+        return None, None
+
+    top_disease = top_diseases[0]
+    label = top_disease.get("label") or top_disease.get("disease") or top_disease.get("name")
+    index = top_disease.get("index")
+
+    if index is not None:
+        try:
+            index = int(index)
+        except (TypeError, ValueError):
+            index = None
+
+    return (str(label) if label else None), index
 
 
 
@@ -291,22 +309,38 @@ Important:
 
 
 def create_gradcam_interpretation_tool(medgemma_model):
-    @tool(
-        name_or_callable="gradcam_interpretation",
-        args_schema=GradCamInterpretationInput,
-    )
+    @tool(name_or_callable="gradcam_interpretation")
     def gradcam_interpretation(
-        gradcam_images: dict[str, Any],
-        top_disease: str,
-        per_class_f1: list[float] | None = None,
-        class_names: list[str] | None = None,
-        top_disease_index: int | None = None,
+        gradcam_images: Annotated[
+            dict[str, Any] | None, InjectedState("gradcam_images")
+        ],
+        top_diseases: Annotated[
+            list[dict[str, Any]] | None, InjectedState("top_diseases")
+        ],
+        prediction_context: Annotated[
+            dict[str, Any] | None, InjectedState("prediction_context")
+        ],
     ) -> str:
         """
         Analyze GradCAM heatmaps from multiple retinal models.
         Uses MedGemma to interpret attention regions and clinical plausibility.
         Does not diagnose or prescribe treatment.
         """
+
+        top_disease, top_disease_index = _get_top_disease(top_diseases)
+        per_class_f1 = (
+            prediction_context.get("per_class_f1") if prediction_context else None
+        )
+        class_names = prediction_context.get("class_names") if prediction_context else None
+
+        if not top_disease:
+            return json.dumps(
+                {
+                    "tool_name": "gradcam_interpretation",
+                    "error": "No top disease was provided in agent state.",
+                },
+                indent=2,
+            )
 
         if not gradcam_images:
             return json.dumps(

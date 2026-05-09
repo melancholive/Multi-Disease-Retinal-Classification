@@ -1,5 +1,9 @@
+import asyncio
+import logging
+import os
 from contextlib import asynccontextmanager
 
+from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -14,6 +18,10 @@ from app.services.load_cnn import (
     shufflenet_model,
 )
 from app.services.load_transformer import fusion_model, prediction_block
+
+load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 CLASS_NAMES = [
     "CENTRAL_SEROUS_RETINOPATHY",
@@ -43,6 +51,21 @@ CLASS_NAMES = [
 ]
 
 
+def _env_flag_enabled(name: str) -> bool:
+    return os.getenv(name, "").lower() in {"1", "true", "yes", "on"}
+
+
+async def warmup_medgemma() -> None:
+    from app.services.medgemma import get_medgemma_pipe
+
+    try:
+        logger.info("Starting MedGemma warmup")
+        await asyncio.to_thread(get_medgemma_pipe)
+        logger.info("MedGemma warmup complete")
+    except Exception:
+        logger.exception("MedGemma warmup failed")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.inference = InferenceService(
@@ -54,7 +77,16 @@ async def lifespan(app: FastAPI):
         device=cnn_device,
         class_names=CLASS_NAMES,
     )
+
+    app.state.medgemma_warmup_task = None
+    if _env_flag_enabled("WARMUP_MEDGEMMA"):
+        app.state.medgemma_warmup_task = asyncio.create_task(warmup_medgemma())
+
     yield
+
+    medgemma_warmup_task = app.state.medgemma_warmup_task
+    if medgemma_warmup_task and not medgemma_warmup_task.done():
+        medgemma_warmup_task.cancel()
 
     app.state.inference = None
 

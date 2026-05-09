@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef } from 'react';
+import AgentChat from './AgentChat';
 import styles from './ImageUploader.module.css';
 
 interface PredictionResult {
@@ -30,11 +31,7 @@ export default function ImageUploader() {
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState<PredictionResult | null>(null);
   const [error, setError] = useState<string | null>(null);
-
-  const [agentQuestion, setAgentQuestion] = useState('');
-  const [agentAnswer, setAgentAnswer] = useState<string | null>(null);
-  const [agentLoading, setAgentLoading] = useState(false);
-  const [agentError, setAgentError] = useState<string | null>(null);
+  const [agentChatKey, setAgentChatKey] = useState(crypto.randomUUID());
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const processFile = (file: File) => {
@@ -54,6 +51,7 @@ export default function ImageUploader() {
     setImageFile(file);
     setError(null);
     setResults(null);
+    setAgentChatKey(crypto.randomUUID());
 
     const reader = new FileReader();
     reader.onload = (e) => {
@@ -112,110 +110,12 @@ export default function ImageUploader() {
 
       const data = await response.json();
       setResults(data);
-      setAgentAnswer(null);
-      setAgentError(null);
+      setAgentChatKey(crypto.randomUUID());
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred');
       setResults(null);
     } finally {
       setLoading(false);
-    }
-  };
-
-  const handleAskAgent = async () => {
-    const question = agentQuestion.trim();
-    if (!question) {
-      setAgentError('Ask a question first');
-      return;
-    }
-
-    setAgentLoading(true);
-    setAgentError(null);
-    setAgentAnswer(null);
-
-    try {
-      const context = results?.top_k?.length
-        ? {
-            top_k: results.top_k,
-            fusion_weights: results.fusion_weights,
-            explanations: results.explanations
-              ? {
-                  target_index: results.explanations.target_index,
-                  target_label: results.explanations.target_label,
-                  cams: {
-                    resnet: results.explanations.cams.resnet?.overlay_png
-                      ? { overlay_png: results.explanations.cams.resnet.overlay_png }
-                      : undefined,
-                    efficientnet: results.explanations.cams.efficientnet?.overlay_png
-                      ? { overlay_png: results.explanations.cams.efficientnet.overlay_png }
-                      : undefined,
-                    shufflenet: results.explanations.cams.shufflenet?.overlay_png
-                      ? { overlay_png: results.explanations.cams.shufflenet.overlay_png }
-                      : undefined,
-                  },
-                }
-              : undefined,
-          }
-        : null;
-
-      const system =
-        'You are a helpful assistant for a retinal disease classification demo. ' +
-        'Explain results in plain language for users. ' +
-        'Do not diagnose. If uncertain, say so. ' +
-        'If you suggest next steps, keep them general and safety-focused. ' +
-        'When Grad-CAM overlays are provided in context, you MUST use the available tools to interpret them when the user asks about Grad-CAM/heatmaps/attention or differences between models.';
-
-      const topDisease =
-        results?.top_k?.[0]?.label ?? results?.explanations?.target_label ?? null;
-
-      const gradcamImages = results?.explanations?.cams
-        ? {
-            resnet: results.explanations.cams.resnet?.overlay_png,
-            efficientnet: results.explanations.cams.efficientnet?.overlay_png,
-            shufflenet: results.explanations.cams.shufflenet?.overlay_png,
-          }
-        : null;
-
-      const toolHint =
-        topDisease && gradcamImages
-          ? `\n\nIf you need to interpret the Grad-CAM overlays, call the tool \`gradcam_interpretation\` with:\n` +
-            `- top_disease: ${JSON.stringify(topDisease)}\n` +
-            `- gradcam_images: {"resnet": <use context.explanations.cams.resnet.overlay_png>, "efficientnet": <use context.explanations.cams.efficientnet.overlay_png>, "shufflenet": <use context.explanations.cams.shufflenet.overlay_png>}\n`
-          : '';
-
-      const userMessage = context
-        ? `User question: ${question}${toolHint}\n\nModel output context (JSON):\n${JSON.stringify(
-            context,
-            null,
-            2
-          )}`
-        : question;
-
-      const res = await fetch('/api/agent', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          messages: [
-            { role: 'system', content: system },
-            { role: 'user', content: userMessage },
-          ],
-        }),
-      });
-
-      if (!res.ok) {
-        const text = await res.text().catch(() => '');
-        throw new Error(text || 'Agent request failed');
-      }
-
-      const data = (await res.json()) as { message?: string };
-      if (!data?.message) {
-        throw new Error('Agent returned no message');
-      }
-      setAgentAnswer(data.message);
-    } catch (e) {
-      setAgentError(e instanceof Error ? e.message : 'Agent error');
-    } finally {
-      setAgentLoading(false);
     }
   };
 
@@ -225,9 +125,7 @@ export default function ImageUploader() {
     setFileName('');
     setResults(null);
     setError(null);
-    setAgentQuestion('');
-    setAgentAnswer(null);
-    setAgentError(null);
+    setAgentChatKey(crypto.randomUUID());
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
@@ -450,53 +348,7 @@ export default function ImageUploader() {
                   </div>
                 )}
 
-                {/* Ask The Agent */}
-                <div className={`${styles.diseaseSummaryCard} dark:${styles.diseaseSummaryCardDark}`}>
-                  <h3 className={`${styles.diseaseSummaryTitle} dark:${styles.diseaseSummaryTitleDark}`}>
-                    Ask The Agent
-                  </h3>
-                  <p className={`${styles.diseaseSummarySubtitle} dark:${styles.diseaseSummarySubtitleDark}`}>
-                    Ask questions about the predictions and Grad-CAM heatmaps
-                  </p>
-
-                  <div className={styles.agentPanel}>
-                    <div className={styles.agentRow}>
-                      <textarea
-                        value={agentQuestion}
-                        onChange={(e) => setAgentQuestion(e.target.value)}
-                        placeholder={
-                          results
-                            ? 'e.g., What does the top prediction mean?'
-                            : 'Upload an image and run Analyze, then ask a question.'
-                        }
-                        className={`${styles.agentInput} dark:${styles.agentInputDark}`}
-                        disabled={agentLoading}
-                      />
-                      <button
-                        type="button"
-                        onClick={handleAskAgent}
-                        disabled={agentLoading}
-                        className={styles.agentButton}
-                        title="Send to agent"
-                      >
-                        {agentLoading ? 'Asking…' : 'Ask'}
-                      </button>
-                    </div>
-
-                    {agentError && (
-                      <div className={`${styles.errorCard} dark:${styles.errorCardDark}`}>
-                        <p className={styles.errorTitle}>Agent Error</p>
-                        <p className={styles.errorMessage}>{agentError}</p>
-                      </div>
-                    )}
-
-                    {agentAnswer && (
-                      <div className={`${styles.agentAnswer} dark:${styles.agentAnswerDark}`}>
-                        {agentAnswer}
-                      </div>
-                    )}
-                  </div>
-                </div>
+                <AgentChat key={agentChatKey} fileName={fileName} results={results} />
               </>
             )}
           </div>

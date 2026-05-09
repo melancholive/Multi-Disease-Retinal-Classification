@@ -31,9 +31,9 @@ class InferenceService:
 
         # Layers used for Grad-CAM (conv feature maps, before pooling).
         self._cam_layers = {
-            "resnet": self.models.resnet.backbone.resnet[-2],
-            "efficientnet": self.models.efficientnet.features[-1],
-            "shufflenet": self.models.shufflenet.backbone.conv5,
+            "resnet": self.models["resnet"].backbone.resnet[-2],
+            "efficientnet": self.models["efficientnet"].features[-1],
+            "shufflenet": self.models["shufflenet"].backbone.conv5,
         }
 
     def predict_from_pil(self, image: Image.Image, *, top_k: int = 5):
@@ -43,10 +43,10 @@ class InferenceService:
 
         with torch.no_grad():
             f_shuffle = extract_features(
-                self.models.shufflenet, image_tensor, self.device
+                self.models["shufflenet"], image_tensor, self.device
             )
-            f_eff = extract_features(self.models.efficientnet, image_tensor, self.device)
-            f_res = extract_features(self.models.resnet, image_tensor, self.device)
+            f_eff = extract_features(self.models["efficientnet"], image_tensor, self.device)
+            f_res = extract_features(self.models["resnet"], image_tensor, self.device)
 
             fused, weights, _, _ = self.fusion_model(f_shuffle, f_eff, f_res)
             logits = self.prediction_block(fused)
@@ -103,7 +103,7 @@ class InferenceService:
                 cams[model_name] = {
                     "overlay_png": gradcam_overlay_png_data_url(
                     model=model,
-                    target_layer=self._cam_layers["resnet"],
+                    target_layer=self._cam_layers[model_name],
                     input_tensor=image_tensor,
                     target_index=target_index,
                     background_image=background_image,
