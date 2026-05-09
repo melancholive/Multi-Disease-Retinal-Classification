@@ -10,6 +10,15 @@ interface PredictionResult {
     index?: number;
   }>;
   fusion_weights?: number[];
+  explanations?: {
+    target_index: number | null;
+    target_label: string | null;
+    cams: {
+      resnet?: { overlay_png: string };
+      efficientnet?: { overlay_png: string };
+      shufflenet?: { overlay_png: string };
+    };
+  };
   error?: string;
   preprocessedImage?: string;
 }
@@ -21,6 +30,11 @@ export default function ImageUploader() {
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState<PredictionResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const [agentQuestion, setAgentQuestion] = useState('');
+  const [agentAnswer, setAgentAnswer] = useState<string | null>(null);
+  const [agentLoading, setAgentLoading] = useState(false);
+  const [agentError, setAgentError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const processFile = (file: File) => {
@@ -98,11 +112,110 @@ export default function ImageUploader() {
 
       const data = await response.json();
       setResults(data);
+      setAgentAnswer(null);
+      setAgentError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred');
       setResults(null);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleAskAgent = async () => {
+    const question = agentQuestion.trim();
+    if (!question) {
+      setAgentError('Ask a question first');
+      return;
+    }
+
+    setAgentLoading(true);
+    setAgentError(null);
+    setAgentAnswer(null);
+
+    try {
+      const context = results?.top_k?.length
+        ? {
+            top_k: results.top_k,
+            fusion_weights: results.fusion_weights,
+            explanations: results.explanations
+              ? {
+                  target_index: results.explanations.target_index,
+                  target_label: results.explanations.target_label,
+                  cams: {
+                    resnet: results.explanations.cams.resnet?.overlay_png
+                      ? { overlay_png: results.explanations.cams.resnet.overlay_png }
+                      : undefined,
+                    efficientnet: results.explanations.cams.efficientnet?.overlay_png
+                      ? { overlay_png: results.explanations.cams.efficientnet.overlay_png }
+                      : undefined,
+                    shufflenet: results.explanations.cams.shufflenet?.overlay_png
+                      ? { overlay_png: results.explanations.cams.shufflenet.overlay_png }
+                      : undefined,
+                  },
+                }
+              : undefined,
+          }
+        : null;
+
+      const system =
+        'You are a helpful assistant for a retinal disease classification demo. ' +
+        'Explain results in plain language for users. ' +
+        'Do not diagnose. If uncertain, say so. ' +
+        'If you suggest next steps, keep them general and safety-focused. ' +
+        'When Grad-CAM overlays are provided in context, you MUST use the available tools to interpret them when the user asks about Grad-CAM/heatmaps/attention or differences between models.';
+
+      const topDisease =
+        results?.top_k?.[0]?.label ?? results?.explanations?.target_label ?? null;
+
+      const gradcamImages = results?.explanations?.cams
+        ? {
+            resnet: results.explanations.cams.resnet?.overlay_png,
+            efficientnet: results.explanations.cams.efficientnet?.overlay_png,
+            shufflenet: results.explanations.cams.shufflenet?.overlay_png,
+          }
+        : null;
+
+      const toolHint =
+        topDisease && gradcamImages
+          ? `\n\nIf you need to interpret the Grad-CAM overlays, call the tool \`gradcam_interpretation\` with:\n` +
+            `- top_disease: ${JSON.stringify(topDisease)}\n` +
+            `- gradcam_images: {"resnet": <use context.explanations.cams.resnet.overlay_png>, "efficientnet": <use context.explanations.cams.efficientnet.overlay_png>, "shufflenet": <use context.explanations.cams.shufflenet.overlay_png>}\n`
+          : '';
+
+      const userMessage = context
+        ? `User question: ${question}${toolHint}\n\nModel output context (JSON):\n${JSON.stringify(
+            context,
+            null,
+            2
+          )}`
+        : question;
+
+      const res = await fetch('/api/agent', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          messages: [
+            { role: 'system', content: system },
+            { role: 'user', content: userMessage },
+          ],
+        }),
+      });
+
+      if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        throw new Error(text || 'Agent request failed');
+      }
+
+      const data = (await res.json()) as { message?: string };
+      if (!data?.message) {
+        throw new Error('Agent returned no message');
+      }
+      setAgentAnswer(data.message);
+    } catch (e) {
+      setAgentError(e instanceof Error ? e.message : 'Agent error');
+    } finally {
+      setAgentLoading(false);
     }
   };
 
@@ -112,6 +225,9 @@ export default function ImageUploader() {
     setFileName('');
     setResults(null);
     setError(null);
+    setAgentQuestion('');
+    setAgentAnswer(null);
+    setAgentError(null);
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
@@ -158,29 +274,54 @@ export default function ImageUploader() {
                     <div className={styles.imagDisplay}>
                       <div className={styles.transformedImageContainer}>
                         <p className={`${styles.transformedLabel} dark:${styles.transformedLabelDark}`}>
-                          Model Attention Heatmap
+                          Grad-CAM Explanations
                         </p>
-                        <div className={`${styles.heatmapPlaceholder} dark:${styles.heatmapPlaceholderDark}`}>
-                          <svg
-                            className={`${styles.heatmapIcon} dark:${styles.heatmapIconDark}`}
-                            fill="none"
-                            stroke="currentColor"
-                            viewBox="0 0 24 24"
-                          >
-                            <path
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              strokeWidth={1.5}
-                              d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"
-                            />
-                          </svg>
-                          <p className={`${styles.heatmapText} dark:${styles.heatmapTextDark}`}>
-                            Attention Heatmap
-                          </p>
-                          <p className={`${styles.heatmapSubtext} dark:${styles.heatmapSubtextDark}`}>
-                            Visual explanation of model predictions coming soon
-                          </p>
-                        </div>
+                        {results.explanations?.cams ? (
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '1rem' }}>
+                            <div>
+                              <p className={`${styles.heatmapText} dark:${styles.heatmapTextDark}`}>ResNet</p>
+                              {results.explanations.cams.resnet?.overlay_png ? (
+                                <img
+                                  src={results.explanations.cams.resnet.overlay_png}
+                                  alt="ResNet Grad-CAM"
+                                  style={{ width: '100%', height: 'auto', borderRadius: '0.5rem' }}
+                                />
+                              ) : (
+                                <p className={`${styles.heatmapSubtext} dark:${styles.heatmapSubtextDark}`}>No Grad-CAM returned</p>
+                              )}
+                            </div>
+                            <div>
+                              <p className={`${styles.heatmapText} dark:${styles.heatmapTextDark}`}>EfficientNet</p>
+                              {results.explanations.cams.efficientnet?.overlay_png ? (
+                                <img
+                                  src={results.explanations.cams.efficientnet.overlay_png}
+                                  alt="EfficientNet Grad-CAM"
+                                  style={{ width: '100%', height: 'auto', borderRadius: '0.5rem' }}
+                                />
+                              ) : (
+                                <p className={`${styles.heatmapSubtext} dark:${styles.heatmapSubtextDark}`}>No Grad-CAM returned</p>
+                              )}
+                            </div>
+                            <div>
+                              <p className={`${styles.heatmapText} dark:${styles.heatmapTextDark}`}>ShuffleNet</p>
+                              {results.explanations.cams.shufflenet?.overlay_png ? (
+                                <img
+                                  src={results.explanations.cams.shufflenet.overlay_png}
+                                  alt="ShuffleNet Grad-CAM"
+                                  style={{ width: '100%', height: 'auto', borderRadius: '0.5rem' }}
+                                />
+                              ) : (
+                                <p className={`${styles.heatmapSubtext} dark:${styles.heatmapSubtextDark}`}>No Grad-CAM returned</p>
+                              )}
+                            </div>
+                          </div>
+                        ) : (
+                          <div className={`${styles.heatmapPlaceholder} dark:${styles.heatmapPlaceholderDark}`}>
+                            <p className={`${styles.heatmapSubtext} dark:${styles.heatmapSubtextDark}`}>
+                              No Grad-CAM data returned
+                            </p>
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -309,22 +450,53 @@ export default function ImageUploader() {
                   </div>
                 )}
 
-                {/* Disease Summary */}
-                {results && (
-                  <div className={`${styles.diseaseSummaryCard} dark:${styles.diseaseSummaryCardDark}`}>
-                    <h3 className={`${styles.diseaseSummaryTitle} dark:${styles.diseaseSummaryTitleDark}`}>
-                      Disease Summary
-                    </h3>
-                    <p className={`${styles.diseaseSummarySubtitle} dark:${styles.diseaseSummarySubtitleDark}`}>
-                      Similarities & differences
-                    </p>
-                    <textarea
-                      readOnly
-                      placeholder="Disease summary will appear here..."
-                      className={`${styles.textarea} dark:${styles.textareaDark}`}
-                    />
+                {/* Ask The Agent */}
+                <div className={`${styles.diseaseSummaryCard} dark:${styles.diseaseSummaryCardDark}`}>
+                  <h3 className={`${styles.diseaseSummaryTitle} dark:${styles.diseaseSummaryTitleDark}`}>
+                    Ask The Agent
+                  </h3>
+                  <p className={`${styles.diseaseSummarySubtitle} dark:${styles.diseaseSummarySubtitleDark}`}>
+                    Ask questions about the predictions and Grad-CAM heatmaps
+                  </p>
+
+                  <div className={styles.agentPanel}>
+                    <div className={styles.agentRow}>
+                      <textarea
+                        value={agentQuestion}
+                        onChange={(e) => setAgentQuestion(e.target.value)}
+                        placeholder={
+                          results
+                            ? 'e.g., What does the top prediction mean?'
+                            : 'Upload an image and run Analyze, then ask a question.'
+                        }
+                        className={`${styles.agentInput} dark:${styles.agentInputDark}`}
+                        disabled={agentLoading}
+                      />
+                      <button
+                        type="button"
+                        onClick={handleAskAgent}
+                        disabled={agentLoading}
+                        className={styles.agentButton}
+                        title="Send to agent"
+                      >
+                        {agentLoading ? 'Asking…' : 'Ask'}
+                      </button>
+                    </div>
+
+                    {agentError && (
+                      <div className={`${styles.errorCard} dark:${styles.errorCardDark}`}>
+                        <p className={styles.errorTitle}>Agent Error</p>
+                        <p className={styles.errorMessage}>{agentError}</p>
+                      </div>
+                    )}
+
+                    {agentAnswer && (
+                      <div className={`${styles.agentAnswer} dark:${styles.agentAnswerDark}`}>
+                        {agentAnswer}
+                      </div>
+                    )}
                   </div>
-                )}
+                </div>
               </>
             )}
           </div>

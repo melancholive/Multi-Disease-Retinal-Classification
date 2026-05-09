@@ -3,7 +3,10 @@ from io import BytesIO
 from fastapi import APIRouter, File, Request, UploadFile
 from PIL import Image
 
+from app.api.agent_routes import router as agent_router
+
 router = APIRouter()
+router.include_router(agent_router)
 
 
 @router.get("/health")

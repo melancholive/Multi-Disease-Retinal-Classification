@@ -1,5 +1,5 @@
-import re
 import json
+import re
 
 
 def extract_json(text):
@@ -30,3 +30,9 @@ def extract_json(text):
         "raw_output": text,
         "parse_warning": "Model did not return valid JSON.",
     }
+
+
+def safe_parse_json(text):
+    """Backwards-compatible alias used by agent tools."""
+
+    return extract_json(text)

@@ -19,60 +19,22 @@ class InferenceService:
         device: torch.device,
         class_names: list[str],
     ):
-        self.shufflenet_model = shufflenet_model
-        self.efficientnet_model = efficientnet_model
-        self.resnet_model = resnet_model
         self.fusion_model = fusion_model
+        self.models = {
+            "resnet": resnet_model,
+            "efficientnet": efficientnet_model,
+            "shufflenet": shufflenet_model,
+        }
         self.prediction_block = prediction_block
         self.device = device
         self.class_names = class_names
 
         # Layers used for Grad-CAM (conv feature maps, before pooling).
         self._cam_layers = {
-            "resnet": self._find_resnet_cam_layer(self.resnet_model),
-            "efficientnet": self._find_efficientnet_cam_layer(self.efficientnet_model),
-            "shufflenet": self._find_shufflenet_cam_layer(self.shufflenet_model),
+            "resnet": self.models.resnet.backbone.resnet[-2],
+            "efficientnet": self.models.efficientnet.features[-1],
+            "shufflenet": self.models.shufflenet.backbone.conv5,
         }
-
-    @staticmethod
-    def _find_resnet_cam_layer(model: nn.Module) -> nn.Module:
-        backbone = getattr(model, "backbone", None)
-        resnet = getattr(backbone, "resnet", None)
-        # Some backbones keep the original torchvision ResNet module with `layer4`.
-        layer4 = getattr(resnet, "layer4", None)
-        if layer4 is not None:
-            return layer4
-
-        # In this repo, `ResNetBackbone` wraps children into an `nn.Sequential`,
-        # which removes attribute names. That sequential is typically:
-        # [conv1, bn1, relu, maxpool, layer1, layer2, layer3, layer4, avgpool].
-        if isinstance(resnet, nn.Sequential) and len(resnet) >= 2:
-            return resnet[-2]
-
-        raise AttributeError(
-            "Could not locate ResNet CAM layer (backbone.resnet.layer4 or sequential[-2])"
-        )
-
-    @staticmethod
-    def _find_efficientnet_cam_layer(model: nn.Module) -> nn.Module:
-        features = getattr(model, "features", None)
-        if features is None:
-            raise AttributeError("Could not locate EfficientNet CAM layer (features)")
-        return features[-1]
-
-    @staticmethod
-    def _find_shufflenet_cam_layer(model: nn.Module) -> nn.Module:
-        backbone = getattr(model, "backbone", None)
-        # Prefer the last conv stage if present (torchvision shufflenet has conv5).
-        conv5 = getattr(backbone, "conv5", None)
-        if conv5 is not None:
-            return conv5
-
-        # Fallback: last child module.
-        children = list(backbone.children()) if backbone is not None else []
-        if not children:
-            raise AttributeError("Could not locate ShuffleNet CAM layer")
-        return children[-1]
 
     def predict_from_pil(self, image: Image.Image, *, top_k: int = 5):
         image_rgb = image.convert("RGB")
@@ -81,10 +43,10 @@ class InferenceService:
 
         with torch.no_grad():
             f_shuffle = extract_features(
-                self.shufflenet_model, image_tensor, self.device
+                self.models.shufflenet, image_tensor, self.device
             )
-            f_eff = extract_features(self.efficientnet_model, image_tensor, self.device)
-            f_res = extract_features(self.resnet_model, image_tensor, self.device)
+            f_eff = extract_features(self.models.efficientnet, image_tensor, self.device)
+            f_res = extract_features(self.models.resnet, image_tensor, self.device)
 
             fused, weights, _, _ = self.fusion_model(f_shuffle, f_eff, f_res)
             logits = self.prediction_block(fused)
@@ -137,35 +99,15 @@ class InferenceService:
 
         cams: dict[str, dict[str, str]] = {}
         with torch.enable_grad():
-            cams["resnet"] = {
-                "overlay_png": gradcam_overlay_png_data_url(
-                    model=self.resnet_model,
+            for model_name, model in self.models.items():
+                cams[model_name] = {
+                    "overlay_png": gradcam_overlay_png_data_url(
+                    model=model,
                     target_layer=self._cam_layers["resnet"],
                     input_tensor=image_tensor,
                     target_index=target_index,
                     background_image=background_image,
                     device=self.device,
-                )
-            }
-            cams["efficientnet"] = {
-                "overlay_png": gradcam_overlay_png_data_url(
-                    model=self.efficientnet_model,
-                    target_layer=self._cam_layers["efficientnet"],
-                    input_tensor=image_tensor,
-                    target_index=target_index,
-                    background_image=background_image,
-                    device=self.device,
-                )
-            }
-            cams["shufflenet"] = {
-                "overlay_png": gradcam_overlay_png_data_url(
-                    model=self.shufflenet_model,
-                    target_layer=self._cam_layers["shufflenet"],
-                    input_tensor=image_tensor,
-                    target_index=target_index,
-                    background_image=background_image,
-                    device=self.device,
-                )
-            }
-
+                    )
+                }
         return cams

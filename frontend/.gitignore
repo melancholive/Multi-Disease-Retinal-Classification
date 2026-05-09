@@ -49,3 +49,5 @@ models/*.pth
 
 shell.nix
 .envrc
+.direnv/
+default.nix

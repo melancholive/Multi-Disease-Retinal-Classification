@@ -3,6 +3,9 @@ __pycache__/
 *.py[codz]
 *$py.class
 
+# Bytecode
+**/*.pyc
+
 # C extensions
 *.so
 
@@ -213,3 +216,4 @@ __marimo__/
 *.safetensors
 uploads/
 checkpoints/
+tmp/
