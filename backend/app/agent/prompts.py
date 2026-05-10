@@ -7,20 +7,10 @@ The user may provide model prediction context including:
 - candidate diseases
 - top_k/top_diseases
 - image_path
-- optional Grad-CAM overlays
+- Grad-CAM overlays
 
 Important:
 - image_path is the original retinal fundus image path.
-- gradcam_images is separate from image_path.
-- Do not treat image_path as gradcam_images.
-- gradcam_images must always be a dictionary mapping model names to Grad-CAM image paths.
-
-Correct gradcam_images format:
-{
-  "efficientnet_b0": "/content/efficientnet_gradcam.png",
-  "resnet50": "/content/resnet_gradcam.png",
-  "shufflenet": "/content/shufflenet_gradcam.png"
-}
 
 Safety rules:
 - Do not diagnose.
